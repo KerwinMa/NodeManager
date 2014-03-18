@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+
+
+ulimit -c unlimited
+ulimit -SHn 51200
+
+
+##获取脚本执行目录
+here=`which "$0" 2>/dev/null || echo .`
+base="`dirname $here`"
+SHELL_DIR=`(cd "$base"; echo $PWD)`
+
+## 获取agent_name和server_id
+AGENT_NAME=`grep "agent_name" $SHELL_DIR/setting/common.config | awk -F"," '{print $2}' | awk -F\" '{print $2}' | sed 's/^ *//'`
+SERVER_ID=`grep "server_id" $SHELL_DIR/setting/common.config | awk -F", " '{print $2}' | awk -F} '{print $1}' | sed 's/^ *//'`
+echo $AGENT_NAME
+## 根目录设置
+BASE_DIR="/data/game_${AGENT_NAME}_${SERVER_ID}/server"
+## cookie
+ERLANG_COOKIE="${AGENT_NAME}_${SERVER_ID}_live_a_better_life!"
+
+rm -rf $MANAGER_LOG_FILE
+
+## 发布后的各个目录 ======= begin =============
+#### -- Server根目录
+SERVER_DIR="${BASE_DIR}"
+#### -- Ebin目录设置
+SERVER_EBIN="${SERVER_DIR}/ebin/"
+#### -- 最终config目录设置
+RELEASE_CONFIG_DIR="${SERVER_DIR}/config"
+#### -- 最终setting 目录
+RELEASE_SETTING_DIR="${SERVER_DIR}/setting"
+## Mnesia 目录
+DB_DIR=/data/database/mnesia/ljxz_${AGENT_NAME}_${SERVER_ID}/
+## 正常启动参数
+PARAMS=" -setcookie ${ERLANG_COOKIE} -pa ${SERVER_EBIN} -smp enable  -env ERL_MAX_ETS_TABLES 500000 -env ERL_MAX_PORTS 25000 -env ERL_NO_VFORK 1 "
+
+## erl路径
+ERL="/usr/local/bin/erl"
+if [ "$AGENT_NAME" == "center" ] ; then
+    IP=(`/sbin/ifconfig eth1|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}'|tr -d "addr:"`)
+    IP=`echo $IP`
+elif [ "$AGENT_NAME" == "line" ] ; then
+    IP=(`/sbin/ifconfig eth1|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}'|tr -d "addr:"`)
+    IP=`echo $IP`
+elif [ "$AGENT_NAME" == "agent" ] ; then
+    IP=(`/sbin/ifconfig eth1|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}'|tr -d "addr:"`)
+    IP=`echo $IP`
+else
+    IP=`echo 127.0.0.1`
+fi
+## 节点名称
+NODE_NAME="server_${AGENT_NAME}_${SERVER_ID}@${IP}"
+## DUMP文件路径
+Date=`date "+%Y-%m-%d-%H%M%S"`
+DUMP="-env ERL_CRASH_DUMP /data/logs/erl_dump/${NODE_NAME}_${Date}.log "
+
+start_game()
+{
+	if   [ "$AGENT_NAME" == "center" ] ; then
+        COMMAND="${ERL} -name ${NODE_NAME} ${PARAMS} ${DUMP} -s manager start -detached -noinput  -hidden +zdbbl 204800"
+    elif [ "$AGENT_NAME" == "agent" ] ; then
+        COMMAND="${ERL} -name ${NODE_NAME} ${PARAMS} ${DUMP} -s manager start -detached -noinput  -hidden +zdbbl 204800"
+    elif [ "$AGENT_NAME" == "line" ] ; then
+        COMMAND="${ERL} -name ${NODE_NAME} ${PARAMS} ${DUMP} -s manager start -detached -noinput  -hidden +zdbbl 204800"
+    else
+        COMMAND="${ERL} -name ${NODE_NAME} ${PARAMS} ${DUMP} -s manager start -detached -noinput  -hidden +zdbbl 204800 +sbt nnts"
+    fi
+    ##
+    LITE=$1
+    if [ $LITE ]; then
+        COMMAND="${COMMAND} -lite true"
+    fi
+    echo "$COMMAND"
+	bash -c "$COMMAND"
+    ##
+    echo "ok"
+}
+## 进入游戏debug节点
+debug_game()
+{
+	EXTRA=$@
+	COMMAND="${ERL} -name debug-${EXTRA}-${NODE_NAME} ${PARAMS} -hidden -remsh ${NODE_NAME} "
+	bash -c "$COMMAND"
+}
+
+help ()
+{
+    echo "使用说明"
+    echo "基本语法: ${0} 命令模块 [option]"
+    echo "命令模块："
+    echo "help                  	显示当前帮助内容"
+    echo "stop                  	stop相关操作"
+    echo "start                 	start相关操作"
+    echo "debug                 	debug相关操作"
+    exit 0
+}
+
+if [ $# -eq 0 ]; then
+	help
+fi
+
+## 停止游戏
+stop_game()
+{
+	COMMAND="${ERL} -name ctl-${NODE_NAME} ${PARAMS} -s manager_ctl -noinput -hidden -extra ${NODE_NAME} stop_all"
+	bash -c "$COMMAND"
+}
+
+## 编译相关
+compile()
+{
+    T=$1
+    if [ "$T" == "" ] ; then
+        make all
+    else
+        make $T
+    fi
+}
+
+## 编译相关
+local_compile()
+{
+    compile $1
+}
+
+## 测试nif启动
+local_test_nif()
+{
+    COMMAND="${ERL} -name ${NODE_NAME} ${PARAMS}"
+	bash -c "$COMMAND"
+}
+
+## 打包
+pack()
+{
+	mkdir -p release
+	TAR_FILE=m10.server.tar.gz
+	tar cfz release/$TAR_FILE config ebin script base.config mgectl
+	echo "文件已生成：release/${TAR_FILE}"
+}
+
+## 本地命令入口
+localhost()
+{
+    CODE=$1
+    shift
+    ARGS=$*
+    case $CODE in
+        compile) local_compile $ARGS;;
+        test_nif) local_test_nif ;;
+        pack ) pack ;;
+        *) help;;
+    esac
+}
+
+## 获取子shell命令
+TARGET=$1
+shift
+case $TARGET in
+	help) help ;;
+	start) start_game $*;;
+    make) compile $1;;
+	stop) stop_game $*;;
+    debug) debug_game $*;;
+	*) help ;;
+esac
